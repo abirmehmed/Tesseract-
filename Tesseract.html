@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tesseract — a 4D hypercube you can rotate</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+  }
+  body {
+    background: #0b0c10;
+    color: #e8e9ec;
+    font-family: 'Inter', -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 14px 16px 16px;
+    overflow-x: hidden;
+  }
+  h1 {
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    font-size: 22px;
+    font-weight: 700;
+    margin: 0 0 2px;
+    letter-spacing: 0.01em;
+  }
+  p.subtitle {
+    color: #9a9ca5;
+    font-size: 12px;
+    margin: 0 0 10px;
+    text-align: center;
+    max-width: 640px;
+    line-height: 1.4;
+  }
+  .stage {
+    width: min(96vw, 88vh, 900px);
+    height: min(96vw, 88vh, 900px);
+    flex: 0 1 auto;
+    background: radial-gradient(circle at 50% 40%, #15171c 0%, #0b0c10 75%);
+    border: 1px solid #232631;
+    border-radius: 16px;
+    position: relative;
+    overflow: hidden;
+  }
+  svg { width: 100%; height: 100%; display: block; }
+  .size-row {
+    width: min(96vw, 900px);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+    font-size: 12px;
+    color: #9a9ca5;
+  }
+  .size-row input[type="range"] { flex: 1; max-width: 200px; }
+  .size-row .size-label { min-width: 64px; }
+  .panel {
+    width: min(96vw, 900px);
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .group-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: #6b6e78;
+    margin-bottom: 5px;
+  }
+  .axis-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 8px;
+  }
+  .axis-card {
+    background: #15171c;
+    border: 1px solid #232631;
+    border-radius: 10px;
+    padding: 7px 9px;
+  }
+  .axis-card.spinning {
+    border-color: var(--axis-accent, #4a6fb5);
+    background: #161b1f;
+    box-shadow: 0 0 0 1px var(--axis-accent, #4a6fb5) inset, 0 0 16px -4px var(--axis-accent, #4a6fb5);
+  }
+  .axis-card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+    gap: 4px;
+  }
+  .axis-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: #1c2230;
+    color: #6fa8e8;
+    white-space: nowrap;
+  }
+  .tag.ordinary { background: #1a2422; color: #6fcfae; }
+  .tag.fourd { background: #2a1f1c; color: #e8a86f; }
+  .axis-card input[type="range"] {
+    width: 100%;
+    margin-bottom: 5px;
+  }
+  .spin-btn {
+    width: 100%;
+    background: #1c1f26;
+    border: 1px solid #2a2d38;
+    color: #cfd1d6;
+    padding: 5px 0;
+    border-radius: 6px;
+    font-size: 10px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+  }
+  .spin-btn:hover { background: #232730; }
+  .spin-btn.active {
+    background: var(--axis-accent-bg, #2a3a5c);
+    border-color: var(--axis-accent, #4a6fb5);
+    color: #fff;
+  }
+  input[type="range"] {
+    -webkit-appearance: none;
+    height: 3px;
+    border-radius: 2px;
+    background: #2a2d38;
+    outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: #e8e9ec;
+    cursor: pointer;
+    border: none;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: #e8e9ec;
+    cursor: pointer;
+    border: none;
+  }
+  .controls-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 2px;
+    flex-wrap: wrap;
+  }
+  button.main-btn {
+    background: #181a20;
+    border: 1px solid #2a2d38;
+    color: #e8e9ec;
+    padding: 7px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  button.main-btn:hover { background: #20232c; border-color: #383c4a; }
+  .speed-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #9a9ca5;
+  }
+  .speed-row input[type="range"] { width: 100px; }
+  .readout {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #6b6e78;
+    margin-left: auto;
+  }
+  @media (max-width: 700px) {
+    .axis-grid { grid-template-columns: repeat(3, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<h1>Tesseract</h1>
+<p class="subtitle">A 4D hypercube, rotated through six planes and projected down to a flat screen. Three rotations are ordinary — cool blues and greens. Three don't exist in our world at all — warm amber, coral, and magenta. Click any "spin" button below to set that axis rotating on its own, and watch its color bleed into the shape.</p>
+
+<div class="stage">
+  <svg id="canvas" viewBox="0 0 820 820"></svg>
+</div>
+
+<div class="size-row">
+  <span class="size-label">Tesseract size</span>
+  <input type="range" id="zoom" min="300" max="1750" value="1500">
+  <span class="readout" id="vertex-readout"></span>
+</div>
+
+<div class="panel">
+  <div>
+    <div class="group-label">Ordinary rotations (the kind you already know)</div>
+    <div class="axis-grid">
+      <div class="axis-card" id="card-xy" data-axis="xy">
+        <div class="axis-card-top">
+          <span class="axis-name">XY</span>
+          <span class="tag ordinary">ordinary</span>
+        </div>
+        <input type="range" id="xy" min="0" max="628" value="120">
+        <button class="spin-btn" id="spin-xy">Spin XY</button>
+      </div>
+      <div class="axis-card" id="card-xz" data-axis="xz">
+        <div class="axis-card-top">
+          <span class="axis-name">XZ</span>
+          <span class="tag ordinary">ordinary</span>
+        </div>
+        <input type="range" id="xz" min="0" max="628" value="0">
+        <button class="spin-btn" id="spin-xz">Spin XZ</button>
+      </div>
+      <div class="axis-card" id="card-yz" data-axis="yz">
+        <div class="axis-card-top">
+          <span class="axis-name">YZ</span>
+          <span class="tag ordinary">ordinary</span>
+        </div>
+        <input type="range" id="yz" min="0" max="628" value="0">
+        <button class="spin-btn" id="spin-yz">Spin YZ</button>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="group-label">4D-only rotations (no 3D equivalent)</div>
+    <div class="axis-grid">
+      <div class="axis-card" id="card-xw" data-axis="xw">
+        <div class="axis-card-top">
+          <span class="axis-name">XW</span>
+          <span class="tag fourd">4D-only</span>
+        </div>
+        <input type="range" id="xw" min="0" max="628" value="0">
+        <button class="spin-btn" id="spin-xw">Spin XW</button>
+      </div>
+      <div class="axis-card" id="card-yw" data-axis="yw">
+        <div class="axis-card-top">
+          <span class="axis-name">YW</span>
+          <span class="tag fourd">4D-only</span>
+        </div>
+        <input type="range" id="yw" min="0" max="628" value="0">
+        <button class="spin-btn" id="spin-yw">Spin YW</button>
+      </div>
+      <div class="axis-card" id="card-zw" data-axis="zw">
+        <div class="axis-card-top">
+          <span class="axis-name">ZW</span>
+          <span class="tag fourd">4D-only</span>
+        </div>
+        <input type="range" id="zw" min="0" max="628" value="0">
+        <button class="spin-btn" id="spin-zw">Spin ZW</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls-row">
+    <button class="main-btn" id="spin-all">Spin all six</button>
+    <button class="main-btn" id="stop-all">Stop all</button>
+    <button class="main-btn" id="reset">Reset</button>
+    <div class="speed-row">
+      Speed
+      <input type="range" id="speed" min="1" max="10" value="4">
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  function generateTesseractVertices() {
+    const vertices = [];
+    for (let x = -1; x <= 1; x += 2)
+      for (let y = -1; y <= 1; y += 2)
+        for (let z = -1; z <= 1; z += 2)
+          for (let w = -1; w <= 1; w += 2)
+            vertices.push([x, y, z, w]);
+    return vertices;
+  }
+
+  function generateTesseractEdges(vertices) {
+    const edges = [];
+    for (let i = 0; i < vertices.length; i++) {
+      for (let j = i + 1; j < vertices.length; j++) {
+        let diff = 0;
+        for (let k = 0; k < 4; k++) if (vertices[i][k] !== vertices[j][k]) diff++;
+        if (diff === 1) edges.push([i, j]);
+      }
+    }
+    return edges;
+  }
+
+  function rotate2D(a, b, theta) {
+    if (!theta) return [a, b];
+    const c = Math.cos(theta), s = Math.sin(theta);
+    return [a * c - b * s, a * s + b * c];
+  }
+
+  function rotate4D(point, ang) {
+    let [x, y, z, w] = point;
+    [x, y] = rotate2D(x, y, ang.xy);
+    [x, z] = rotate2D(x, z, ang.xz);
+    [x, w] = rotate2D(x, w, ang.xw);
+    [y, z] = rotate2D(y, z, ang.yz);
+    [y, w] = rotate2D(y, w, ang.yw);
+    [z, w] = rotate2D(z, w, ang.zw);
+    return [x, y, z, w];
+  }
+
+  function project4Dto3D(p, dist) {
+    const [x, y, z, w] = p;
+    const scale = 1 / (dist - w);
+    return [x * scale, y * scale, z * scale];
+  }
+
+  function project3Dto2D(p, dist) {
+    const [x, y, z] = p;
+    const scale = 1 / (dist - z);
+    return [x * scale, y * scale, scale];
+  }
+
+  const vertices = generateTesseractVertices();
+  const edges = generateTesseractEdges(vertices);
+  const svg = document.getElementById('canvas');
+  const W = 820, H = 820, CX = W / 2, CY = H / 2;
+
+  const AXES = ['xy', 'xz', 'yz', 'xw', 'yw', 'zw'];
+
+  // Each rotation plane gets its own color. Ordinary planes (xy, xz, yz)
+  // are cool blues/teals; 4D-only planes (xw, yw, zw) are warm
+  // amber/coral/magenta. When an axis is actively spinning, its color
+  // blends into every edge -- so toggling on XW visibly warms up the
+  // whole shape instead of just changing a number in a caption.
+  const AXIS_COLOR = {
+    xy: [91, 143, 224],   // blue
+    xz: [91, 196, 224],   // cyan
+    yz: [91, 224, 184],   // teal-green
+    xw: [224, 160, 91],   // amber
+    yw: [224, 104, 91],   // coral
+    zw: [201, 91, 224],   // magenta
+  };
+  const RESTING_COLOR = [124, 154, 214]; // calm blue-grey when nothing is spinning
+  const sliders = {};
+  const spinButtons = {};
+  const cards = {};
+  AXES.forEach(id => {
+    sliders[id] = document.getElementById(id);
+    spinButtons[id] = document.getElementById('spin-' + id);
+    cards[id] = document.getElementById('card-' + id);
+  });
+  const zoomSlider = document.getElementById('zoom');
+  const speedSlider = document.getElementById('speed');
+  const vertexReadout = document.getElementById('vertex-readout');
+  const spinAllBtn = document.getElementById('spin-all');
+  const stopAllBtn = document.getElementById('stop-all');
+  const resetBtn = document.getElementById('reset');
+
+  const spinning = { xy: false, xz: false, yz: false, xw: false, yw: false, zw: false };
+  let timerId = null;
+
+  function angles() {
+    const v = {};
+    AXES.forEach(id => v[id] = parseFloat(sliders[id].value) / 100);
+    return v;
+  }
+
+  function activeBlendColor() {
+    const active = AXES.filter(id => spinning[id]);
+    if (active.length === 0) return RESTING_COLOR;
+    let r = 0, g = 0, b = 0;
+    active.forEach(id => {
+      const c = AXIS_COLOR[id];
+      r += c[0]; g += c[1]; b += c[2];
+    });
+    return [r / active.length, g / active.length, b / active.length];
+  }
+
+  function render() {
+    const ang = angles();
+    const scale = parseFloat(zoomSlider.value);
+    const projected = vertices.map(v => {
+      const rotated = rotate4D(v, ang);
+      const p3 = project4Dto3D(rotated, 3.4);
+      const p2 = project3Dto2D(p3, 3.4);
+      return {
+        x: CX + p2[0] * scale,
+        y: CY - p2[1] * scale,
+        depth: p2[2],
+        w: rotated[3]
+      };
+    });
+
+    const wRange = 1.8;
+    const [baseR, baseG, baseB] = activeBlendColor();
+    let svgContent = '';
+
+    edges.forEach(([i, j]) => {
+      const a = projected[i], b = projected[j];
+      const avgW = (a.w + b.w) / 2;
+      const t = (avgW + wRange) / (wRange * 2);
+      const opacity = 0.18 + 0.7 * t;
+      const width = 1.0 + 2.6 * t;
+      // Closer-in-w (higher t) edges lean brighter/lighter; far ones stay
+      // closer to the base blended color, darkened slightly.
+      const r = Math.min(255, baseR + t * 50);
+      const g = Math.min(255, baseG + t * 50);
+      const bch = Math.min(255, baseB + t * 50);
+      svgContent += '<line x1="' + a.x.toFixed(2) + '" y1="' + a.y.toFixed(2) +
+        '" x2="' + b.x.toFixed(2) + '" y2="' + b.y.toFixed(2) +
+        '" stroke="rgb(' + r.toFixed(0) + ',' + g.toFixed(0) + ',' + bch.toFixed(0) + ')" stroke-width="' + width.toFixed(2) +
+        '" stroke-linecap="round" opacity="' + opacity.toFixed(2) + '"/>';
+    });
+
+    projected.forEach(p => {
+      const t = (p.w + wRange) / (wRange * 2);
+      const r = 5 + 5.5 * t;
+      const opacity = 0.5 + 0.5 * t;
+      svgContent += '<circle cx="' + p.x.toFixed(2) + '" cy="' + p.y.toFixed(2) +
+        '" r="' + r.toFixed(2) + '" fill="#f4f6fb" opacity="' + opacity.toFixed(2) + '"/>';
+    });
+
+    svg.innerHTML = svgContent;
+  }
+
+  AXES.forEach(id => {
+    sliders[id].addEventListener('input', () => {
+      if (spinning[id]) return;
+      render();
+    });
+  });
+  zoomSlider.addEventListener('input', render);
+
+  function anySpinning() {
+    return AXES.some(id => spinning[id]);
+  }
+
+  function ensureLoopRunning() {
+    if (timerId !== null) return;
+    timerId = setInterval(tick, 16);
+  }
+
+  function stopLoopIfIdle() {
+    if (!anySpinning() && timerId !== null) {
+      clearInterval(timerId);
+      timerId = null;
+    }
+  }
+
+  function tick() {
+    const speed = parseFloat(speedSlider.value) * 0.05;
+    AXES.forEach(id => {
+      if (!spinning[id]) return;
+      let v = parseFloat(sliders[id].value) + speed;
+      if (v > 628) v -= 628;
+      sliders[id].value = v;
+    });
+    render();
+  }
+
+  function rgbString(c) { return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')'; }
+  function rgbaString(c, a) { return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
+
+  function setSpinning(id, on) {
+    spinning[id] = on;
+    spinButtons[id].classList.toggle('active', on);
+    spinButtons[id].textContent = on ? 'Spinning ' + id.toUpperCase() : 'Spin ' + id.toUpperCase();
+    cards[id].classList.toggle('spinning', on);
+    const accent = rgbString(AXIS_COLOR[id]);
+    const accentBg = rgbaString(AXIS_COLOR[id], 0.28);
+    cards[id].style.setProperty('--axis-accent', accent);
+    spinButtons[id].style.setProperty('--axis-accent', accent);
+    spinButtons[id].style.setProperty('--axis-accent-bg', accentBg);
+    if (on) {
+      ensureLoopRunning();
+    } else {
+      stopLoopIfIdle();
+    }
+  }
+
+  AXES.forEach(id => {
+    spinButtons[id].addEventListener('click', () => {
+      setSpinning(id, !spinning[id]);
+    });
+  });
+
+  spinAllBtn.addEventListener('click', () => {
+    AXES.forEach(id => setSpinning(id, true));
+  });
+
+  stopAllBtn.addEventListener('click', () => {
+    AXES.forEach(id => setSpinning(id, false));
+  });
+
+  resetBtn.addEventListener('click', () => {
+    AXES.forEach(id => setSpinning(id, false));
+    sliders.xy.value = 120;
+    sliders.xz.value = 0;
+    sliders.yz.value = 0;
+    sliders.xw.value = 0;
+    sliders.yw.value = 0;
+    sliders.zw.value = 0;
+    zoomSlider.value = 1500;
+    render();
+  });
+
+  vertexReadout.textContent = vertices.length + ' vertices, ' + edges.length + ' edges';
+  render();
+})();
+</script>
+
+</body>
+</html>
