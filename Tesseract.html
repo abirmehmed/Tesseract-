@@ -229,7 +229,7 @@
           <span class="axis-name">XZ</span>
           <span class="tag ordinary">ordinary</span>
         </div>
-        <input type="range" id="xz" min="0" max="628" value="0">
+        <input type="range" id="xz" min="0" max="628" value="60">
         <button class="spin-btn" id="spin-xz">Spin XZ</button>
       </div>
       <div class="axis-card" id="card-yz" data-axis="yz">
@@ -251,7 +251,7 @@
           <span class="axis-name">XW</span>
           <span class="tag fourd">4D-only</span>
         </div>
-        <input type="range" id="xw" min="0" max="628" value="0">
+        <input type="range" id="xw" min="0" max="628" value="40">
         <button class="spin-btn" id="spin-xw">Spin XW</button>
       </div>
       <div class="axis-card" id="card-yw" data-axis="yw">
@@ -277,6 +277,7 @@
     <button class="main-btn" id="spin-all">Spin all six</button>
     <button class="main-btn" id="stop-all">Stop all</button>
     <button class="main-btn" id="reset">Reset</button>
+    <button class="main-btn" id="mode-toggle">Switch to solid mode</button>
     <div class="speed-row">
       Speed
       <input type="range" id="speed" min="1" max="10" value="4">
@@ -342,6 +343,54 @@
   const svg = document.getElementById('canvas');
   const W = 820, H = 820, CX = W / 2, CY = H / 2;
 
+  // ---- SOLID MODE: cell structure and face quads ----
+  // A tesseract has 8 "cells" (cube-shaped sub-volumes), each defined by
+  // pinning one of the 4 coordinates to +1 or -1. Each cell's own 8
+  // vertices form a cube with 6 square faces -- we generate those faces
+  // as 2D-fillable quads (4 vertex indices each, walked in perimeter
+  // order so they don't self-cross when drawn).
+  const CELL_LIST = [
+    { axis: 0, sign: 1, name: '+x' }, { axis: 0, sign: -1, name: '-x' },
+    { axis: 1, sign: 1, name: '+y' }, { axis: 1, sign: -1, name: '-y' },
+    { axis: 2, sign: 1, name: '+z' }, { axis: 2, sign: -1, name: '-z' },
+    { axis: 3, sign: 1, name: '+w' }, { axis: 3, sign: -1, name: '-w' },
+  ];
+  const CELL_NORMAL = {
+    '+x': [1,0,0,0], '-x': [-1,0,0,0], '+y': [0,1,0,0], '-y': [0,-1,0,0],
+    '+z': [0,0,1,0], '-z': [0,0,-1,0], '+w': [0,0,0,1], '-w': [0,0,0,-1],
+  };
+
+  function cellFaces(cellAxis, cellSign) {
+    const freeAxes = [0, 1, 2, 3].filter(a => a !== cellAxis);
+    const faces = [];
+    freeAxes.forEach(faceAxis => {
+      [1, -1].forEach(faceSign => {
+        const remainingAxes = freeAxes.filter(a => a !== faceAxis);
+        // Perimeter winding order (not diagonal) so the quad doesn't bowtie.
+        const order = [[1, 1], [1, -1], [-1, -1], [-1, 1]];
+        const corners = order.map(([s1, s2]) => {
+          const coord = [0, 0, 0, 0];
+          coord[cellAxis] = cellSign;
+          coord[faceAxis] = faceSign;
+          coord[remainingAxes[0]] = s1;
+          coord[remainingAxes[1]] = s2;
+          return vertices.findIndex(v => v.every((c, k) => c === coord[k]));
+        });
+        faces.push(corners);
+      });
+    });
+    return faces; // 6 quads, each [i,j,k,l] vertex indices
+  }
+
+  // Precompute all 48 face quads (8 cells x 6 faces), tagged with which
+  // cell they belong to (for coloring and visibility testing).
+  const ALL_FACES = [];
+  CELL_LIST.forEach(cell => {
+    cellFaces(cell.axis, cell.sign).forEach(quad => {
+      ALL_FACES.push({ quad, cellName: cell.name });
+    });
+  });
+
   const AXES = ['xy', 'xz', 'yz', 'xw', 'yw', 'zw'];
 
   // Each rotation plane gets its own color. Ordinary planes (xy, xz, yz)
@@ -358,6 +407,7 @@
     zw: [201, 91, 224],   // magenta
   };
   const RESTING_COLOR = [124, 154, 214]; // calm blue-grey when nothing is spinning
+  let solidMode = false;
   const sliders = {};
   const spinButtons = {};
   const cards = {};
@@ -440,10 +490,93 @@
     svg.innerHTML = svgContent;
   }
 
+  // SOLID MODE: instead of drawing every edge as a thin line, draw each
+  // VISIBLE cell's faces as filled, semi-transparent quads, sorted
+  // back-to-front (painter's algorithm). A cell is "visible" if its
+  // rotated 4D outward normal points toward the camera (positive w
+  // component) -- the same test used to decide which 3 faces of an
+  // ordinary cube you can see from outside. This actually occludes
+  // geometry behind it, unlike wireframe mode where every edge always
+  // shows through.
+  function renderSolid() {
+    const ang = angles();
+    const scale = parseFloat(zoomSlider.value);
+    const [baseR, baseG, baseB] = activeBlendColor();
+
+    // project every vertex once
+    const projected = vertices.map(v => {
+      const rotated = rotate4D(v, ang);
+      const p3 = project4Dto3D(rotated, 3.4);
+      const p2 = project3Dto2D(p3, 3.4);
+      return {
+        x: CX + p2[0] * scale,
+        y: CY - p2[1] * scale,
+        depth: p2[2],
+        w: rotated[3]
+      };
+    });
+
+    // determine which cells are front-facing this frame
+    const frontFacing = new Set();
+    CELL_LIST.forEach(cell => {
+      const rotatedNormal = rotate4D(CELL_NORMAL[cell.name], ang);
+      if (rotatedNormal[3] > 0) frontFacing.add(cell.name);
+    });
+
+    // build drawable faces: only from front-facing cells, with computed
+    // average depth for back-to-front sorting
+    const drawFaces = ALL_FACES
+      .filter(f => frontFacing.has(f.cellName))
+      .map(f => {
+        const pts = f.quad.map(i => projected[i]);
+        const avgDepth = pts.reduce((s, p) => s + p.depth, 0) / pts.length;
+        const avgW = pts.reduce((s, p) => s + p.w, 0) / pts.length;
+        return { pts, avgDepth, avgW, cellName: f.cellName };
+      })
+      .sort((a, b) => a.avgDepth - b.avgDepth); // far (small depth) first
+
+    const wRange = 1.8;
+    let svgContent = '';
+
+    drawFaces.forEach(f => {
+      const t = (f.avgW + wRange) / (wRange * 2);
+      const r = Math.min(255, baseR + t * 50);
+      const g = Math.min(255, baseG + t * 50);
+      const b = Math.min(255, baseB + t * 50);
+      const fillOpacity = 0.10 + 0.16 * t;
+      const strokeOpacity = 0.35 + 0.4 * t;
+      const points = f.pts.map(p => p.x.toFixed(2) + ',' + p.y.toFixed(2)).join(' ');
+      svgContent += '<polygon points="' + points + '" fill="rgb(' + r.toFixed(0) + ',' + g.toFixed(0) + ',' + b.toFixed(0) + ')" fill-opacity="' + fillOpacity.toFixed(2) + '" stroke="rgb(' + r.toFixed(0) + ',' + g.toFixed(0) + ',' + b.toFixed(0) + ')" stroke-opacity="' + strokeOpacity.toFixed(2) + '" stroke-width="1.4"/>';
+    });
+
+    // draw vertices that belong to at least one front-facing cell on top,
+    // so corners still read clearly against the filled panels
+    projected.forEach((p, i) => {
+      const cellsHere = [
+        vertices[i][0] === 1 ? '+x' : '-x',
+        vertices[i][1] === 1 ? '+y' : '-y',
+        vertices[i][2] === 1 ? '+z' : '-z',
+        vertices[i][3] === 1 ? '+w' : '-w',
+      ];
+      if (!cellsHere.some(c => frontFacing.has(c))) return;
+      const t = (p.w + wRange) / (wRange * 2);
+      const r = 4 + 4 * t;
+      const opacity = 0.6 + 0.4 * t;
+      svgContent += '<circle cx="' + p.x.toFixed(2) + '" cy="' + p.y.toFixed(2) +
+        '" r="' + r.toFixed(2) + '" fill="#f4f6fb" opacity="' + opacity.toFixed(2) + '"/>';
+    });
+
+    svg.innerHTML = svgContent;
+  }
+
+  function renderActive() {
+    if (solidMode) renderSolid(); else render();
+  }
+
   AXES.forEach(id => {
     sliders[id].addEventListener('input', () => {
       if (spinning[id]) return;
-      render();
+      renderActive();
     });
   });
   zoomSlider.addEventListener('input', render);
@@ -472,7 +605,7 @@
       if (v > 628) v -= 628;
       sliders[id].value = v;
     });
-    render();
+    renderActive();
   }
 
   function rgbString(c) { return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')'; }
@@ -512,17 +645,24 @@
   resetBtn.addEventListener('click', () => {
     AXES.forEach(id => setSpinning(id, false));
     sliders.xy.value = 120;
-    sliders.xz.value = 0;
+    sliders.xz.value = 60;
     sliders.yz.value = 0;
-    sliders.xw.value = 0;
+    sliders.xw.value = 40;
     sliders.yw.value = 0;
     sliders.zw.value = 0;
     zoomSlider.value = 1500;
-    render();
+    renderActive();
+  });
+
+  const modeToggleBtn = document.getElementById('mode-toggle');
+  modeToggleBtn.addEventListener('click', () => {
+    solidMode = !solidMode;
+    modeToggleBtn.textContent = solidMode ? 'Switch to wireframe mode' : 'Switch to solid mode';
+    renderActive();
   });
 
   vertexReadout.textContent = vertices.length + ' vertices, ' + edges.length + ' edges';
-  render();
+  renderActive();
 })();
 </script>
 
