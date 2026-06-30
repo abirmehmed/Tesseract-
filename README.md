@@ -1,3 +1,3 @@
 # Tesseract-
 
-<img width="1920" height="946" alt="image" src="https://github.com/user-attachments/assets/f6ce1e13-2fa4-49df-b9d4-6506725414ec" />
+<img width="1859" height="906" alt="image" src="https://github.com/user-attachments/assets/e3e88034-fc61-48c6-94fd-477717c8e58e" />
