@@ -598,7 +598,13 @@
   }
 
   function tick() {
-    const speed = parseFloat(speedSlider.value) * 0.05;
+    // The old formula (speedVal * 0.05) made every setting below 10 too slow
+    // to perceive -- a full rotation took over 3 minutes at speed=1, so the
+    // slider felt like it did nothing until you hit the very top. This curve
+    // gives speed=1 a clearly visible ~29-second rotation and speed=10 a
+    // brisk ~2-second rotation, with even steps in between.
+    const speedVal = parseFloat(speedSlider.value);
+    const speed = 0.35 + (speedVal - 1) * 0.45;
     AXES.forEach(id => {
       if (!spinning[id]) return;
       let v = parseFloat(sliders[id].value) + speed;
