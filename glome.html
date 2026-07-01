@@ -208,6 +208,7 @@
     <button class="main-btn" id="spin-all">Spin all six</button>
     <button class="main-btn" id="stop-all">Stop all</button>
     <button class="main-btn" id="reset">Reset</button>
+    <button class="main-btn" id="mode-toggle">Switch to solid mode</button>
     <div class="speed-row">
       Speed
       <input type="range" id="speed" min="1" max="10" value="4">
@@ -333,10 +334,58 @@
       }
     }
 
-    return { vertices, edges };
+    return { vertices, edges, shells };
   }
 
-  const { vertices, edges } = generateGlome(7, 5, 8);
+  // ---- Solid-mode faces ----
+  // Every vertex we generated lies exactly on the unit 3-sphere
+  // (x^2+y^2+z^2+w^2 = 1, centered at the origin), which means each
+  // vertex's own position IS its outward normal direction -- same trick
+  // a plain 3D sphere uses. So a face is "facing the 4D camera" if the
+  // rotated w-component of its vertices is positive, mirroring the
+  // tesseract's cell-normal test. We build two kinds of fillable quads/
+  // triangles: (1) each shell's own UV-sphere skin (lat/long patches +
+  // pole caps), and (2) "webbing" quads connecting matching latitude
+  // rings between neighboring full shells, so the space between nested
+  // spheres reads as continuous material rather than a gap.
+  function generateGlomeFaces(shells) {
+    const faces = []; // each: array of vertex indices (3 or 4)
+
+    shells.forEach(shell => {
+      if (shell.single !== undefined) return;
+      const nPhiLocal = shell.ring[0].length;
+      // pole caps
+      for (let p = 0; p < nPhiLocal; p++) {
+        faces.push([shell.poleN, shell.ring[0][p], shell.ring[0][(p + 1) % nPhiLocal]]);
+        const last = shell.ring.length - 1;
+        faces.push([shell.poleS, shell.ring[last][(p + 1) % nPhiLocal], shell.ring[last][p]]);
+      }
+      // lat/long patches between ring rows
+      for (let t = 0; t < shell.ring.length - 1; t++) {
+        for (let p = 0; p < nPhiLocal; p++) {
+          const p2 = (p + 1) % nPhiLocal;
+          faces.push([shell.ring[t][p], shell.ring[t][p2], shell.ring[t + 1][p2], shell.ring[t + 1][p]]);
+        }
+      }
+    });
+
+    for (let s = 0; s < shells.length - 1; s++) {
+      const a = shells[s], b = shells[s + 1];
+      if (a.single !== undefined || b.single !== undefined) continue; // skip pole-shell webbing
+      for (let t = 0; t < a.ring.length; t++) {
+        const nPhiLocal = a.ring[t].length;
+        for (let p = 0; p < nPhiLocal; p++) {
+          const p2 = (p + 1) % nPhiLocal;
+          faces.push([a.ring[t][p], a.ring[t][p2], b.ring[t][p2], b.ring[t][p]]);
+        }
+      }
+    }
+
+    return faces;
+  }
+
+  const { vertices, edges, shells } = generateGlome(7, 5, 8);
+  const faces = generateGlomeFaces(shells);
 
   const svg = document.getElementById('canvas');
   const W = 820, H = 820, CX = W / 2, CY = H / 2;
@@ -377,16 +426,19 @@
     return [r / active.length, g / active.length, b / active.length];
   }
 
-  function render() {
+  function projectAll() {
     const ang = angles();
     const scale = parseFloat(zoomSlider.value);
-    const projected = vertices.map(v => {
+    return vertices.map(v => {
       const rotated = rotate4D(v, ang);
       const p3 = project4Dto3D(rotated, 3.0);
       const p2 = project3Dto2D(p3, 3.0);
       return { x: CX + p2[0] * scale, y: CY - p2[1] * scale, depth: p2[2], w: rotated[3] };
     });
+  }
 
+  function renderWire() {
+    const projected = projectAll();
     const wRange = 1.0;
     const [baseR, baseG, baseB] = activeBlendColor();
     let svgContent = '';
@@ -409,10 +461,52 @@
     svg.innerHTML = svgContent;
   }
 
+  // SOLID MODE: fill each face (a shell's own skin patches, its pole
+  // caps, and the webbing between neighboring shells) as a semi-
+  // transparent polygon instead of drawing bare edges. A face is kept
+  // only if its vertices' rotated w-component is, on average, positive
+  // -- i.e. it faces toward the 4D camera -- exactly like culling the
+  // back half of an ordinary sphere. Remaining faces are painter's-
+  // algorithm sorted back-to-front by projected depth.
+  function renderSolid() {
+    const projected = projectAll();
+    const [baseR, baseG, baseB] = activeBlendColor();
+    const wRange = 1.0;
+
+    const drawFaces = faces
+      .map(idxs => {
+        const pts = idxs.map(i => projected[i]);
+        const avgW = pts.reduce((s, p) => s + p.w, 0) / pts.length;
+        const avgDepth = pts.reduce((s, p) => s + p.depth, 0) / pts.length;
+        return { pts, avgW, avgDepth };
+      })
+      .filter(f => f.avgW > 0)
+      .sort((a, b) => a.avgDepth - b.avgDepth);
+
+    let svgContent = '';
+    drawFaces.forEach(f => {
+      const t = (f.avgW + wRange) / (wRange * 2);
+      const r = Math.min(255, baseR + t * 50);
+      const g = Math.min(255, baseG + t * 50);
+      const b = Math.min(255, baseB + t * 50);
+      const fillOpacity = 0.10 + 0.20 * t;
+      const strokeOpacity = 0.25 + 0.35 * t;
+      const points = f.pts.map(p => p.x.toFixed(2) + ',' + p.y.toFixed(2)).join(' ');
+      svgContent += '<polygon points="' + points + '" fill="rgb(' + r.toFixed(0) + ',' + g.toFixed(0) + ',' + b.toFixed(0) +
+        ')" fill-opacity="' + fillOpacity.toFixed(2) + '" stroke="rgb(' + r.toFixed(0) + ',' + g.toFixed(0) + ',' + b.toFixed(0) +
+        ')" stroke-opacity="' + strokeOpacity.toFixed(2) + '" stroke-width="0.8"/>';
+    });
+
+    svg.innerHTML = svgContent;
+  }
+
+  let solidMode = false;
+  function renderActive() { if (solidMode) renderSolid(); else renderWire(); }
+
   AXES.forEach(id => {
-    sliders[id].addEventListener('input', () => { if (!spinning[id]) render(); });
+    sliders[id].addEventListener('input', () => { if (!spinning[id]) renderActive(); });
   });
-  zoomSlider.addEventListener('input', render);
+  zoomSlider.addEventListener('input', renderActive);
 
   function anySpinning() { return AXES.some(id => spinning[id]); }
   function ensureLoopRunning() { if (timerId === null) timerId = setInterval(tick, 16); }
@@ -427,7 +521,7 @@
       if (v > 628) v -= 628;
       sliders[id].value = v;
     });
-    render();
+    renderActive();
   }
 
   function rgbString(c) { return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')'; }
@@ -456,11 +550,18 @@
     sliders.xy.value = 120; sliders.xz.value = 60; sliders.yz.value = 0;
     sliders.xw.value = 40; sliders.yw.value = 0; sliders.zw.value = 0;
     zoomSlider.value = 1400;
-    render();
+    renderActive();
   });
 
-  vertexReadout.textContent = vertices.length + ' vertices, ' + edges.length + ' edges';
-  render();
+  const modeToggleBtn = document.getElementById('mode-toggle');
+  modeToggleBtn.addEventListener('click', () => {
+    solidMode = !solidMode;
+    modeToggleBtn.textContent = solidMode ? 'Switch to wireframe mode' : 'Switch to solid mode';
+    renderActive();
+  });
+
+  vertexReadout.textContent = vertices.length + ' vertices, ' + edges.length + ' edges, ' + faces.length + ' faces';
+  renderActive();
 })();
 </script>
 
